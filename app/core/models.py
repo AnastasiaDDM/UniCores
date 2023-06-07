@@ -72,7 +72,7 @@ class UniCore:
 
     def update(self, obj_dict):
         """
-        Функция изменения атрибутов объекта на поля из obj_dict
+        Функция изменения атрибутов объекта на поля из obj_dict.
 
         Args:
             obj_dict (dict): словарь изменяемых полей объекта с новыми значениями
@@ -92,7 +92,7 @@ class UniCore:
 
     def delete(self):
         """
-        Функция удаления объекта.
+        Функция мягкого удаления объекта. В бд проставляется параметр удаления, дата или флаг.
 
         Returns:
             object: объект, иначе Exception
@@ -115,7 +115,7 @@ class UniCore:
 
     def set_date(self, attr_date, date=None):
         """
-        Функция установки даты date атрибуту объекта из attr_date
+        Функция установки даты date атрибуту объекта из attr_date.
 
         Args:
             attr_date (str): наименование атрибута, где необходимо проставить дату
@@ -136,7 +136,7 @@ class UniCore:
 
     def has_attr(self, name):
         """
-        Функция проверки наличия поля под названием name у текущего объекта
+        Функция проверки наличия поля под названием name у текущего объекта.
 
         Args:
             name (str): искомое название атрибута
@@ -263,8 +263,9 @@ class UniCores:
         Функция получения объекта общая.
 
         Args:
-           obj_dict (dict): словарь с id объекта (возможно mode(str) - режим поиска данных,
-            "all" - ищет среди всех (удаленных и неудаленных), иначе поиск среди только неудаленных
+           obj_dict (dict): словарь с двумя возможными ключами id и mode (mode(str) - режим поиска
+            данных, "all" - ищет среди всех объектов бд (удаленных и неудаленных),
+            иначе поиск среди только неудаленных
            obj_class (class): пользовательский класс экземпляра
            exc (class): пользовательский класс ошибки
            mode_return (str): режим возврата данных, "raw_obj" возращается объект, иначе словарь
@@ -282,12 +283,7 @@ class UniCores:
                 id = int(id)
                 obj = None
 
-                mode = ''
-                if 'mode' in obj_dict:  # Проверка mode в obj_dict
-                    if obj_dict['mode'] == 'all':
-                        mode = 'all'
-
-                if mode == 'all':
+                if obj_dict.get('mode') == 'all':  # Передан параметр mode для поиска в бд
                     # Получение любого (удаленного, неудаленного) объекта
                     obj = session.query(obj_class).filter(obj_class.id == id).first()
                 else:
@@ -295,7 +291,6 @@ class UniCores:
                         # Получение неудаленного объекта
                         obj = session.query(obj_class).filter(obj_class.id == id,
                                                               obj_class.date_del is None).first()
-
                 if obj:
                     if mode_return == 'raw_obj':
                         return obj
@@ -304,41 +299,110 @@ class UniCores:
             raise WrongIDEx(str(id))
         except Exception as error:
             session.rollback()
-            lg.warning(str(type(error)) + "::" + str(obj_class) + "::" + str(id) + "::" + str(exc(str(error))))
+            lg.warning(str(type(error)) + "::" + str(obj_class) + "::" + str(id) + "::" +
+                       str(exc(str(error))))
             if type(error) == ObjectNotFound or type(error) == WrongIDEx:
                 raise error
             raise exc(str(error))
 
-    # Получение id из obj_dict
+    @staticmethod
+    def delete(obj_dict, obj_class, exc, mode=None):
+        """
+        Функция удаления объекта общая. Реализованы мягкое и жесткое удаление.
+
+        Args:
+           obj_dict (dict): словарь с id объекта
+           obj_class (class): пользовательский класс экземпляра
+           exc (class): пользовательский класс ошибки
+           mode (str): режим удаления данных, "remove" - жесткое удаление из бд,
+            иначе установка даты удаления
+
+        Returns:
+           bool: True при успешном удалении, иначе Exception
+        """
+
+        session = db.session()
+        try:
+            id = UniCores.get_id_from_obj_dict(obj_dict, obj_class)
+            # Проверка id объекта
+            if check.isdigit(id):
+                # Получение объекта
+                obj = session.query(obj_class).get(int(id))
+                if obj:
+                    if mode == 'remove':
+                        # Удаление объекта из бд
+                        UniCores.delete_hard(obj, obj_class, exc)
+                    else:
+                        obj.delete()
+                        session.commit()
+                    lg.info(str(obj_class) + "::" + str(obj.id) + "::Объект успешно удален")
+                    return True
+                raise ObjectNotFound(str(id))
+            raise WrongIDEx(str(id))
+        except Exception as error:
+            session.rollback()
+            lg.warning(str(type(error)) + "::" + str(obj_class) + "::" + str(id) + "::" +
+                       str(exc(str(error))))
+            if type(error) == ObjectNotFound or type(error) == WrongIDEx:
+                raise error
+            raise exc(str(error))
+
+    # Удаление объекта безусловное
+    @staticmethod
+    def delete_hard(obj, obj_class, exc):
+        """
+        Функция "безвозвратного" удаления объекта общая. Жесткое удаление записи из бд.
+
+        Args:
+           obj (object): объект
+           obj_class (class): пользовательский класс экземпляра
+           exc (class): пользовательский класс ошибки
+
+        Returns:
+           bool: True при успешном удалении, иначе Exception
+        """
+
+        session = db.session()
+        try:
+            # Проверка наличия объекта
+            if obj:
+                session.delete(obj)  # Удаление объекта из бд
+                session.commit()
+                return True
+            raise ObjectNotFound(str(obj.id))
+        except Exception as error:
+            session.rollback()
+            lg.warning(str(type(error)) + "::" + str(obj_class) + "::" + str(obj.id) +
+                       "::" + str(exc(str(error))))
+            if type(error) == ObjectNotFound:
+                raise error
+            raise exc(str(error))
+
     @staticmethod
     def __get_id_from_obj_dict(obj_dict, obj_class):
+        """Получение id пользователского объекта из obj_dict"""
         id = None
-        # if obj_class in (app.core.clients.models.Client, app.core.staff.models.Staff):
-        #     obj_class = User
-        # Получаем название ключевого поля, переданного извне
         try:
+            # Получаем название ключевого поля, переданного изпользовательского класса
             name_field_id = obj_class().__name_field_id__
             id = obj_dict[name_field_id]
-
         except:
             id = obj_dict.get('id', None)
         return id
 
-    # Оболочка для внутренней функции __get_id_from_obj_dict
     @staticmethod
     def get_id_from_obj_dict(obj_dict, obj_class):
         """
+        Оболочка для внутренней функции __get_id_from_obj_dict. Функция получения id из obj_dict.
+        Необходимо найти id объекта, id может быть задан как "id" или как id конкретного
+        пользовательского класса, например, "rate_id".
 
-            Функция получения id из obj_dict
+        Args:
+            obj_dict (dict): Словарь параметров для объекта, содержащий поле с id
+            obj_class (class): Пользовательский класс экземпляра
 
-            Args:
-                obj_dict (dict): Словарь параметров
-                obj_class (class): Класс экземпляра
-
-            Returns:
-                int: ID объекта при успешном выполнении, иначе Exception
-
+        Returns:
+            int: ID объекта при успешном выполнении, иначе Exception
         """
 
         return UniCores.__get_id_from_obj_dict(obj_dict, obj_class)
-
