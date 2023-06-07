@@ -1,3 +1,5 @@
+"""Модуль для общих классов и методов. Ядро для наследования пользовательскими классами."""
+
 from app.util.db import db
 from app.core.exceptions import *
 from datetime import datetime
@@ -13,6 +15,7 @@ lg = log.getlogger('api')
 
 class UniCore:
     """Класс для общих методов обработки одиногочного экземпляра пользовательских классов"""
+    __fields_dict__ = None
 
     def check_obj(self, obj_dict):
         """
@@ -189,7 +192,7 @@ class UniCores:
             flag_success = True
             # Проверяем есть ли объект с такими данными в бд
             try:
-                obj_non_repeat = session.query(obj_class).filter(obj_class.date_del == None)
+                obj_non_repeat = session.query(obj_class).filter(obj_class.date_del is None)
                 non_repeat = obj_class.__non_repeat__  # Получаем атрибуты, которые принято считать
                 for key in non_repeat:                 # полным сходством объектов
                     obj_non_repeat = obj_non_repeat.filter(non_repeat[key] == obj_dict[key])
@@ -375,6 +378,105 @@ class UniCores:
             lg.warning(str(type(error)) + "::" + str(obj_class) + "::" + str(obj.id) +
                        "::" + str(exc(str(error))))
             if type(error) == ObjectNotFound:
+                raise error
+            raise exc(str(error))
+
+    @staticmethod
+    def set_date(obj_dict, attr_date, obj_class, exc, date=None, return_obj=False):
+        """
+        Функция установки даты в бд общая. Используется для установки даты блокировки и прочего.
+
+        Args:
+            obj_dict (dict): словарь, который содержит обязательный параметр - ключ "id"
+            attr_date (string): наименование поля даты, например, "date_lock"
+            obj_class (class): пользовательский класс экземпляра
+            exc (class): пользовательский класс ошибки
+            date (datetime): дата для установки
+            return_obj (bool): True - вернуть объект в виде словаря, иначе не возвращать
+
+        Returns:
+            bool/dict: объект в формате True/JSON при успешном выполнении, иначе Exception
+        """
+
+        id = None
+        session = db.session()
+        try:
+            id = UniCores.get_id_from_obj_dict(obj_dict, obj_class)
+            if check.isdigit(id):  # Проверка id объекта
+                obj = session.query(obj_class).get(int(id))  # Получение объекта
+                if obj:
+                    obj.set_date(attr_date, date)  # Установка даты в атрибуты объекта
+                    session.commit()
+                    lg.info(str(obj_class) + "::" + str(obj.id) + "::Объект успешно изменен")
+
+                    if return_obj:  # Нужно передать словарь объекта
+                        return obj.get_dict()
+                    return True
+                raise ObjectNotFound(str(id))
+            raise WrongIDEx(str(id))
+        except Exception as error:
+            session.rollback()
+            lg.warning(str(type(error)) + "::" + str(obj_class) + "::" + str(id) +
+                       "::" + str(exc(str(error))))
+            if type(error) == ObjectNotFound or type(error) == WrongIDEx:
+                raise error
+            raise exc(str(error))
+
+    @staticmethod
+    def set_unset(obj_dict, attr_array, obj_class, exc):
+        """
+        Функция установки связей в промежуточных таблицах общая. Добавление/удаление записей
+        из промежуточных таблиц.
+
+        Args:
+            obj_dict (dict): словарь параметров для установки, содержит ключи "mode" и
+             поля id объектов, со связью которых необходимо работать
+            attr_array (array): массив атрибутов целевого класса, которым необходимо установить
+             значения из obj_dict
+            obj_class (class): пользовательский класс экземпляра
+            exc (class): пользовательский класс ошибки
+
+        Returns:
+            bool: True при успешном выполнении, иначе Exception
+        """
+
+        session = db.session()
+        try:
+            mode = obj_dict.get('mode')  # Сохранение значения mode
+            del (obj_dict['mode'])  # Удаление mode для поиска объекта в бд
+
+            # Получение объекта для удаления или сравнения при добавлении
+            query = session.query(obj_class)  # Запрос всех объектов класса obj_class
+            for attr in attr_array:
+                # Наращивание запроса с фильтрами по полям для связки
+                query = query.filter(attr == int(obj_dict.get(str(attr.key))))
+            # Сохранение в переменную полученного объекта
+            obj = query.first()
+
+            # Проверка mode
+            if mode and mode is True:  # Необходимо добавить
+
+                if obj:  # Объект есть, не добавляем
+                    raise ObjectAlreadyExistsEx(str(obj_dict))
+                else:  # Объекта нет, можно добавлять новый
+                    n = obj_class().update(obj_dict)  # Устанвока значений объекту
+                    session.add(n)
+                    session.commit()
+                    lg.info(str(obj_class) + "::" + str(obj_dict) + "::Объект успешно добавлен")
+                    return True
+
+            elif mode is False:  # Необходимо удалить
+                if obj:  # Объект есть, его можно удалить
+                    session.delete(obj)
+                    session.commit()
+                    lg.info(str(obj_class) + "::" + str(obj_dict) + "::Объект успешно удален")
+                    return True
+                raise ObjectNotFound(str(obj_dict))
+        except Exception as error:
+            session.rollback()
+            lg.warning(str(type(error)) + "::" + str(obj_class) + "::" + str(obj_dict) +
+                       "::" + str(exc(str(error))))
+            if type(error) == ObjectNotFound or type(error) == ObjectAlreadyExistsEx:
                 raise error
             raise exc(str(error))
 
